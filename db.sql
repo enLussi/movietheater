@@ -144,15 +144,22 @@ IN n_projection_id INT(11)
 )
 BEGIN
 	DECLARE n_movie_id INT(11);
+    DECLARE n_place_left INT(11);
     SET n_movie_id = (SELECT s_movie_id FROM movietheater.showing WHERE s_projection_id = n_projection_id);
-
-	IF (SELECT YEAR(CURDATE()) - YEAR((SELECT birthdate FROM movietheater.users WHERE user_id = n_customer_id)) AS age ) <= 14 THEN
-		INSERT INTO movietheater.carts(c_customer_id, c_product_id, quantity, c_movie_id) VALUES (n_customer_id, 3, 1, n_movie_id);
-	ELSEIF (SELECT is_student FROM movietheater.anonymous WHERE anonymous_id = n_customer_id) = 1 THEN
-		INSERT INTO movietheater.carts(c_customer_id, c_product_id, quantity, c_movie_id) VALUES (n_customer_id, 2, 1, n_movie_id);
+    SET n_place_left = (SELECT place_left FROM movietheater.room INNER JOIN (SELECT p_room_id FROM movietheater.projection WHERE projection_id = n_projection_id) AS r ON room_id = p_room_id);
+    
+    IF n_place_left > 0 THEN
+		IF (SELECT YEAR(CURDATE()) - YEAR((SELECT birthdate FROM movietheater.users WHERE user_id = n_customer_id)) AS age ) <= 14 THEN
+			INSERT INTO movietheater.carts(c_customer_id, c_product_id, quantity, c_projection_id) VALUES (n_customer_id, 3, 1, n_projection_id);
+		ELSEIF (SELECT is_student FROM movietheater.anonymous WHERE anonymous_id = n_customer_id) = 1 THEN
+			INSERT INTO movietheater.carts(c_customer_id, c_product_id, quantity, c_projection_id) VALUES (n_customer_id, 2, 1, n_projection_id);
+		ELSE 
+			INSERT INTO movietheater.carts(c_customer_id, c_product_id, quantity, c_projection_id) VALUES (n_customer_id, 1, 1, n_projection_id);
+		END IF;
+        UPDATE movietheater.room SET place_left = place_left-1 WHERE room_id = (SELECT p_room_id FROM movietheater.projection WHERE projection_id = n_projection_id);
 	ELSE 
-		INSERT INTO movietheater.carts(c_customer_id, c_product_id, quantity, c_movie_id) VALUES (n_customer_id, 1, 1, n_movie_id);
-    END IF;
+		SELECT "No more place available" AS "Error";
+	END IF;
 END //
 
 DELIMITER ;
@@ -167,19 +174,25 @@ IN n_is_student TINYINT
 BEGIN
 	DECLARE n_movie_id INT(11);
 	DECLARE last_id INT(11);
+    DECLARE n_place_left INT(11);
     
     SET n_movie_id = (SELECT s_movie_id FROM movietheater.showing WHERE s_projection_id = n_projection_id);
+    SET n_place_left = (SELECT place_left FROM movietheater.room INNER JOIN (SELECT p_room_id FROM movietheater.projection WHERE projection_id = n_projection_id) AS r ON room_id = p_room_id);
     
 	INSERT INTO movietheater.anonymous ( is_student ) VALUES ( n_is_student );
     SET last_id = LAST_INSERT_ID();
-
-	IF n_under_14 = 1 THEN
-		INSERT INTO movietheater.carts(c_customer_id, c_product_id, quantity, c_movie_id) VALUES (last_id, 3, 1, n_movie_id);
-	ELSEIF (SELECT is_student FROM movietheater.anonymous WHERE anonymous_id = last_id) = 1 THEN
-		INSERT INTO movietheater.carts(c_customer_id, c_product_id, quantity, c_movie_id) VALUES (last_id, 2, 1, n_movie_id);
-	ELSE 
-		INSERT INTO movietheater.carts(c_customer_id, c_product_id, quantity, c_movie_id) VALUES (last_id, 1, 1, n_movie_id);
-    END IF;
+	IF n_place_left > 0 THEN
+		IF n_under_14 = 1 THEN
+			INSERT INTO movietheater.carts(c_customer_id, c_product_id, quantity, c_projection_id) VALUES (last_id, 3, 1, n_projection_id);
+		ELSEIF (SELECT is_student FROM movietheater.anonymous WHERE anonymous_id = last_id) = 1 THEN
+			INSERT INTO movietheater.carts(c_customer_id, c_product_id, quantity, c_projection_id) VALUES (last_id, 2, 1, n_projection_id);
+		ELSE 
+			INSERT INTO movietheater.carts(c_customer_id, c_product_id, quantity, c_projection_id) VALUES (last_id, 1, 1, n_projection_id);
+		END IF;
+		UPDATE movietheater.room SET place_left = place_left-1 WHERE room_id = (SELECT p_room_id FROM movietheater.projection WHERE projection_id = n_projection_id);
+	ELSE
+		SELECT "No more place available" AS "Error";
+	END IF;
 END //
 
 DELIMITER ;
@@ -211,7 +224,8 @@ CREATE TABLE movietheater.room (
 	room_id INT(11) NOT NULL AUTO_INCREMENT PRIMARY KEY, 
     room_name VARCHAR(100) NOT NULL, 
     theater INT(11) NOT NULL,
-    number_of_places INT NOT NULL,
+    number_of_places INT(11) NOT NULL,
+    place_left INT(11) NULL,
     FOREIGN KEY (theater) REFERENCES movietheater.theater(theater_id)
     );
     
@@ -224,8 +238,8 @@ CREATE TABLE movietheater.movie (
 CREATE TABLE movietheater.projection (
 	projection_id INT(11) NOT NULL AUTO_INCREMENT PRIMARY KEY,
     projection_time TIME NOT NULL,
-    room_id INT(11) NOT NULL,
-    FOREIGN KEY (room_id) REFERENCES movietheater.room(room_id)
+    p_room_id INT(11) NOT NULL,
+    FOREIGN KEY (p_room_id) REFERENCES movietheater.room(room_id)
 	);
     
 CREATE TABLE movietheater.showing (
@@ -284,12 +298,12 @@ CREATE TABLE movietheater.products (
 CREATE TABLE movietheater.carts ( 
     c_customer_id INT(11) NOT NULL,
     c_product_id INT(11) NOT NULL,
-    c_movie_id INT(11) NOT NULL,
+    c_projection_id INT(11) NOT NULL,
     quantity INT(11) NOT NULL,
     PRIMARY KEY (c_customer_id, c_product_id),
     FOREIGN KEY (c_customer_id) REFERENCES movietheater.anonymous(anonymous_id),
     FOREIGN KEY (c_product_id) REFERENCES movietheater.products(product_id),
-    FOREIGN KEY (c_movie_id) REFERENCES movietheater.movie(movie_id)
+    FOREIGN KEY (c_projection_id) REFERENCES movietheater.projection(projection_id)
     );
     
 INSERT INTO movietheater.products (price, label)
@@ -309,39 +323,39 @@ INSERT INTO movietheater.roles (role_name)
 
 INSERT INTO movietheater.theater (theater_name) 
 	VALUES 
-    ('Filmothèque des Cinéphile'),
+    ('Filmothèque des Cinéphiles'),
     ('Grand Diplo'),
     ('Auditorium du Musée de l\'Opéra')
     ;
 
-INSERT INTO movietheater.room (room_name, theater, number_of_places)
+INSERT INTO movietheater.room (room_name, theater, number_of_places, place_left)
 	VALUES
-    ('Salle 1', 1, '150'),
-    ('Salle 2', 1, '112'),
-    ('Salle 3', 1, '92'),
-    ('Salle 4', 1, '120'),
-    ('Salle 5', 1, '230'),
-    ('Salle 6', 1, '108'),
-    ('Salle VIP', 1, '50'),
-    ('Salle 101', 2, '500'),
-    ('Salle 102', 2, '250'),
-    ('Salle 103', 2, '213'),
-    ('Salle 201', 2, '555'),
-    ('Salle 202', 2, '312'),
-    ('Salle 301', 2, '260'),
-    ('Salle 302', 2, '302'),
-    ('Salle 303', 2, '190'),
-    ('Salle 304', 2, '293'),
-    ('Salle 401', 2, '423'),
-    ('Salle Charles Burles', 3, '305'),
-    ('Salle Mady Mesplé', 3, '268'),
-    ('Salle René Bianco', 3, '461'),
-    ('Salle Christiane Eda-Pierre', 3, '346'),
-    ('Salle Hélène Bouvier', 3, '480'),
-    ('Salle Michel Sénéchal', 3, '369')
+    ('Salle 1', 1, '150', '150'),
+    ('Salle 2', 1, '112', '112'),
+    ('Salle 3', 1, '92', '92'),
+    ('Salle 4', 1, '120', '120'),
+    ('Salle 5', 1, '230', '230'),
+    ('Salle 6', 1, '108', '108'),
+    ('Salle VIP', 1, '50', '50'),
+    ('Salle 101', 2, '500', '500'),
+    ('Salle 102', 2, '250', '250'),
+    ('Salle 103', 2, '213', '213'),
+    ('Salle 201', 2, '555', '555'),
+    ('Salle 202', 2, '312', '312'),
+    ('Salle 301', 2, '260', '260'),
+    ('Salle 302', 2, '302', '302'),
+    ('Salle 303', 2, '190', '190'),
+    ('Salle 304', 2, '293', '293'),
+    ('Salle 401', 2, '423', '423'),
+    ('Salle Charles Burles', 3, '305', '305'),
+    ('Salle Mady Mesplé', 3, '268', '268'),
+    ('Salle René Bianco', 3, '461', '461'),
+    ('Salle Christiane Eda-Pierre', 3, '346', '346'),
+    ('Salle Hélène Bouvier', 3, '480', '480'),
+    ('Salle Michel Sénéchal', 3, '369', '369')
     ;
 
-INSERT INTO movietheater.projection ( projection_time, room_id )
+INSERT INTO movietheater.projection ( projection_time, p_room_id )
 	VALUES
     ('10:30:00', 1), ('14:00:00', 1), ('19:00:00', 1),
     ('11:00:00', 2), ('15:00:00', 2), ('20:00:00', 2),
@@ -473,12 +487,51 @@ CALL movietheater.new_customer('Ophelia', 'Mailloux', 'OpheliaMailloux@rhyta.com
 CALL movietheater.new_customer('Yvon', 'Jalbert', 'YvonJalbert@dayrep.com', SHA1('Af1IhieFu3'), '2010-04-06', 0);
 
 -- Take customer id, projection id to assign a cart to a customer
-CALL movietheater.add_to_cart(26, 13);
-CALL movietheater.add_to_cart(27, 40);
-CALL movietheater.add_to_cart(28, 38);
+CALL movietheater.add_to_cart(26, 13); -- Cliente Monique Lussier pour la projection id 13 (Salle 5 à 10h30 Filmothèque des Cinéphiles) diffusant le film id 2 (The White Knight)
+CALL movietheater.add_to_cart(27, 40); -- Cliente Aurélie Edouard pour la projection id 40 (Salle 301 à 14h30 Grand Diplo) diffusant le film id 5 (Extrastellar)
+CALL movietheater.add_to_cart(28, 38); -- Cliente Elise Ruais pour la projection id 38 (Salle 202 à 20h30 Grand Diplo) diffusant le film id 7 (Retour vers le plassé)
 
 -- Take projection id, under 14 yo (0 or 1) and is student (0 or 1) to create an anonymous customer and assign it a cart
 CALL movietheater.add_to_cart_anonymous(21, 1, 0);
+
+
+-- Get registered users name with theater name room hour price for their carts
+SELECT theater_name AS "Cinéma", room_name AS "Salle", projection_time AS "Heure", label AS "Formule", price AS "prix", fullname AS "Nom" FROM movietheater.projection
+	INNER JOIN (SELECT c_projection_id  FROM movietheater.carts) 
+    AS a ON projection_id = c_projection_id
+    INNER JOIN (SELECT label, price, proj_id FROM movietheater.products 
+		INNER JOIN (SELECT c_product_id, c_projection_id AS proj_id FROM movietheater.carts) 
+		AS b ON product_id = c_product_id) 
+	AS c ON projection_id = proj_id
+    INNER JOIN (SELECT CONCAT(firstname, " ", lastname) AS fullname, proj_id2 FROM movietheater.users 
+		INNER JOIN (SELECT c_customer_id, c_projection_id AS proj_id2 FROM movietheater.carts) 
+		AS d ON user_id = c_customer_id)
+	AS e ON projection_id = proj_id2
+    INNER JOIN (SELECT room_id, room_name, theater_name FROM movietheater.room 
+		INNER JOIN (SELECT theater_name, theater_id FROM movietheater.theater) 
+        AS g ON theater_id = theater) 
+	AS f ON p_room_id = room_id;
+    
+-- Get anonymous customers id with theater name room hour price for their carts
+SELECT theater_name AS "Cinéma", room_name AS "Salle", projection_time AS "Heure", label AS "Formule", price AS "prix", anonymous_id AS "ID" FROM movietheater.projection
+	INNER JOIN (SELECT c_projection_id  FROM movietheater.carts) 
+    AS a ON projection_id = c_projection_id
+    INNER JOIN (SELECT label, price, proj_id FROM movietheater.products 
+		INNER JOIN (SELECT c_product_id, c_projection_id AS proj_id FROM movietheater.carts) 
+		AS b ON product_id = c_product_id) 
+	AS c ON projection_id = proj_id
+	INNER JOIN (SELECT anonymous_id, proj_id3 FROM movietheater.anonymous 
+		INNER JOIN (SELECT c_customer_id, c_projection_id AS proj_id3 FROM movietheater.carts) 
+		AS d ON anonymous_id = c_customer_id) 
+	AS e ON projection_id = proj_id3
+	INNER JOIN (SELECT room_id, room_name, theater_name FROM movietheater.room 
+		INNER JOIN (SELECT theater_name, theater_id FROM movietheater.theater) 
+        AS g ON theater_id = theater) 
+	AS f ON p_room_id = room_id
+    LEFT JOIN movietheater.users ON anonymous_id = user_id WHERE user_id IS NULL;
+    
+
+
 
 -- Display the sum of all cart from different customer
 SELECT SUM(price) AS "Total" FROM
@@ -495,20 +548,20 @@ INNER JOIN (
 AS t ON user_id = t.staff_id;
 
 -- Get Room by theaters with a minimum and/or maximum number of places
-SELECT room_id AS "ID", room_name AS "Nom de la Salle", number_of_places AS "Place", theater_name AS "Cinéma" FROM movietheater.room
+SELECT room_id AS "ID", room_name AS "Nom de la Salle", number_of_places AS "Places", place_left AS "Places restantes", theater_name AS "Cinéma" FROM movietheater.room
 INNER JOIN (
 	SELECT theater_id, theater_name FROM movietheater.theater
     ) AS t ON theater = t.theater_id
-WHERE number_of_places BETWEEN 100 AND 300;
+WHERE number_of_places BETWEEN 0 AND 600;
 
 -- Get All Room name, Movie name and projection time registered
 SELECT movie_name "Nom du film", room_name AS "Salle", s_projection_id AS "Id Projection", projection_time AS "Heure de projection", theater_name AS "Cinéma" FROM movietheater.theater 
 	INNER JOIN (
 	SELECT s_projection_id, movie_name, room_name, projection_time, theater, s_movie_id FROM movietheater.room
 		INNER JOIN (
-		SELECT s_projection_id, room_id AS s_room_id, movie_name, projection_time, s_movie_id FROM movietheater.movie
+		SELECT s_projection_id, p_room_id AS s_room_id, movie_name, projection_time, s_movie_id FROM movietheater.movie
 		INNER JOIN (
-			SELECT s_projection_id, projection_time, room_id, s_movie_id FROM movietheater.projection
+			SELECT s_projection_id, projection_time, p_room_id, s_movie_id FROM movietheater.projection
 			INNER JOIN (
 				SELECT s_projection_id , s_movie_id FROM movietheater.showing
 				) AS proj ON projection_id = s_projection_id
